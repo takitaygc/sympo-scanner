@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <title>カメラ用スキャナー - シンポジウム受付</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: "Hiragino Kaku Gothic ProN","Hiragino Sans","Yu Gothic UI","Yu Gothic","Meiryo","Noto Sans JP","Noto Sans CJK JP","IPAexGothic",sans-serif;
+           background: #f2f4f8; padding-bottom: 30px; }
+    header { background: #133B47; color: #fff; text-align: center;
+             padding: 10px; font-size: 16px; font-weight: bold; }
+    .mode-bar { display: flex; }
+    .mode-bar button { flex: 1; padding: 14px 0; font-size: 17px; font-weight: bold;
+      border: none; background: #d7dce5; color: #666; }
+    .mode-bar button.active-in   { background: #1a7f37; color: #fff; }
+    .mode-bar button.active-out  { background: #d4640a; color: #fff; }
+    .mode-bar button.active-auto { background: #2F8FA7; color: #fff; }
+    #reader { width: 100%; max-width: 480px; margin: 0 auto; background: #000; }
+    .panel { max-width: 480px; margin: 10px auto; padding: 0 10px; }
+    #result { border-radius: 10px; padding: 16px; text-align: center;
+      font-size: 16px; background: #fff; color: #555; min-height: 90px; }
+    #result.ok   { background: #e2f6e6; border: 2px solid #1a7f37; color: #14532d; }
+    #result.out  { background: #FFF1E6; border: 2px solid #d4640a; color: #7a3a10; }
+    #result.dup  { background: #fff7db; border: 2px solid #b8860b; color: #6b5107; }
+    #result.err  { background: #fde4e4; border: 2px solid #c22; color: #7a1212; }
+    #result .name { font-size: 26px; font-weight: bold; margin: 4px 0; }
+    #result .warn { display: inline-block; margin-top: 6px; background: #c22; color: #fff;
+      border-radius: 6px; padding: 2px 10px; font-size: 13px; font-weight: bold; }
+    #result .memo { display: block; margin-top: 8px; background: #FFF2CC; color: #6b4f00; border: 1px solid #E0A800;
+      border-radius: 6px; padding: 6px 10px; font-size: 14px; text-align: left; }
+    #counts { text-align: center; margin-top: 10px; font-size: 14px; color: #444; }
+    #counts b { font-size: 18px; }
+    .manual { margin-top: 14px; display: flex; gap: 6px; }
+    .manual input { flex: 1; padding: 10px; font-size: 16px;
+      border: 1px solid #bbb; border-radius: 8px; }
+    .manual button { padding: 10px 14px; font-size: 15px; border: none;
+      border-radius: 8px; background: #133B47; color: #fff; }
+    .note { margin-top: 8px; font-size: 12px; color: #888; text-align: center; line-height: 1.6; }
+    .cam-bar { max-width: 480px; margin: 6px auto 0; padding: 0 10px;
+      display: flex; align-items: center; gap: 10px; }
+    .cam-bar button { padding: 6px 12px; font-size: 13px; border: 1px solid #99a;
+      border-radius: 6px; background: #fff; color: #334; }
+    .cam-bar span { font-size: 12px; color: #777; }
+    .links { text-align: center; margin-top: 10px; font-size: 12px; }
+    .links a { color: #2F8FA7; margin: 0 6px; }
+  </style>
+</head>
+<body>
+  <header>シンポジウム受付システム <span style="font-size:12px;font-weight:normal;opacity:.8">カメラ用スキャナー</span>
+    <button id="btn-cfg" onclick="toggleConfig()" style="float:right;font-size:12px;padding:3px 8px;border-radius:6px;border:1px solid #fff;background:transparent;color:#fff;cursor:pointer">⚙ 設定</button></header>
+  <div id="cfg" style="display:none;background:#FFF8E1;border-bottom:1px solid #E0A800;padding:10px 14px;font-size:13px">
+    <div style="margin-bottom:6px"><b>接続設定</b>（スプレッドシートのメニュー「受付システム → カメラ用スキャナー（外部ホスト版）の設定値を表示」の値を貼り付け）</div>
+    <div style="display:grid;grid-template-columns:auto 1fr;gap:6px 10px;align-items:center;max-width:720px">
+      <label>ウェブアプリURL</label><input id="cfg-url" placeholder="https://script.google.com/macros/s/…/exec" style="font-size:13px;padding:6px">
+      <label>トークン</label><input id="cfg-token" placeholder="英数字16文字" style="font-size:13px;padding:6px">
+    </div>
+    <div style="margin-top:8px"><button onclick="saveConfig()" style="padding:6px 14px;border-radius:6px;border:1px solid #2F8FA7;background:#2F8FA7;color:#fff;cursor:pointer">保存して接続テスト</button>
+      <span id="cfg-msg" style="margin-left:8px"></span></div>
+  </div>
+
+  <div class="mode-bar">
+    <button id="btn-in"   class="active-in" onclick="setMode('in')">入 場</button>
+    <button id="btn-out"  onclick="setMode('out')">退 場</button>
+    <button id="btn-auto" onclick="setMode('auto')">自 動</button>
+  </div>
+
+  <div id="reader"></div>
+  <div class="cam-bar">
+    <button id="btn-cam" onclick="toggleCamera()">カメラ停止</button>
+    <span id="cam-status"></span>
+  </div>
+
+  <div class="panel">
+    <div id="result">QRコードを読み取ってください</div>
+    <div id="counts">読み取りを開始すると人数が表示されます</div>
+    <div class="manual">
+      <input id="manual-id" placeholder="受付IDを手入力（Enterで記録）" autocomplete="off">
+      <button onclick="manualSubmit()">記録</button>
+    </div>
+    <div class="note">
+      <b>入場</b>: 入場・再入場を記録　<b>退場</b>: 退場を記録　<b>自動</b>: 会場内の人は退場、それ以外は入場として記録<br>
+      USB/BluetoothのQRリーダー（キーボード型）はこのページを開いたまま読み取るだけで記録されます。<br>
+      PCでは F1＝入場 / F2＝退場 / F3＝自動。同じコードの連続読み取りは10秒間無視されます。
+    </div>
+    <div class="links"><a href="#" data-page="dashboard">参加状況ダッシュボード</a>｜<a href="#" data-page="register">当日受付（カード発行）</a></div>
+  </div>
+
+<script>
+  // ============ 接続設定（Apps Script の公開URLとトークン） ============
+  var CFG = { url: '', token: '' };
+  try { CFG = JSON.parse(localStorage.getItem('scannerCfg') || '{}'); } catch (e) {}
+  (function() {   // ?api=…&t=… 付きで開いた場合は自動設定
+    var m = location.search.match(/[?&]api=([^&]+)/), k = location.search.match(/[?&]t=([^&]+)/);
+    if (m && k) { CFG = { url: decodeURIComponent(m[1]), token: decodeURIComponent(k[1]) };
+      try { localStorage.setItem('scannerCfg', JSON.stringify(CFG)); } catch (e) {}
+      history.replaceState(null, '', location.pathname); }
+  })();
+  function applyLinks() {
+    var base = (CFG.url || '').replace(/\/dev(\?|$)/, '/exec$1');
+    document.querySelectorAll('a[data-page]').forEach(function(a) {
+      a.href = base ? base + '?page=' + a.getAttribute('data-page') : '#'; a.target = '_blank'; a.rel = 'noopener';
+    });
+  }
+  function toggleConfig() {
+    var el = document.getElementById('cfg');
+    el.style.display = el.style.display === 'none' ? 'block' : 'none';
+    document.getElementById('cfg-url').value = CFG.url || '';
+    document.getElementById('cfg-token').value = CFG.token || '';
+  }
+  function saveConfig() {
+    CFG = { url: document.getElementById('cfg-url').value.trim().replace(/\/dev(\?|$)/, '/exec$1'),
+            token: document.getElementById('cfg-token').value.trim() };
+    try { localStorage.setItem('scannerCfg', JSON.stringify(CFG)); } catch (e) {}
+    var msg = document.getElementById('cfg-msg'); msg.textContent = '接続テスト中…';
+    api({ action: 'ping' }).then(function(r) {
+      msg.textContent = r.status === 'ok' ? '✅ 接続OK（' + r.event + '）' : '❌ ' + r.message;
+      if (r.status === 'ok') { applyLinks(); setTimeout(function() { document.getElementById('cfg').style.display = 'none'; }, 1200); }
+    }).catch(function(e) { msg.textContent = '❌ 接続できません: ' + e; });
+  }
+  // Apps Script へ問い合わせ（POST。失敗時は GET にフォールバック）
+  function api(params) {
+    if (!CFG.url || !CFG.token) { document.getElementById('cfg').style.display = 'block';
+      return Promise.reject('接続設定（URLとトークン）が未設定です'); }
+    var body = Object.assign({ t: CFG.token }, params);
+    return fetch(CFG.url, { method: 'POST', body: JSON.stringify(body), redirect: 'follow' })
+      .then(function(r) { return r.json(); })
+      .catch(function() {
+        var qs = Object.keys(body).map(function(k) { return encodeURIComponent(k) + '=' + encodeURIComponent(body[k]); }).join('&');
+        return fetch(CFG.url + '?api=1&' + qs, { redirect: 'follow' }).then(function(r) { return r.json(); });
+      });
+  }
+  applyLinks();
+  if (!CFG.url || !CFG.token) document.getElementById('cfg').style.display = 'block';
+
+  var mode = 'in';
+  var busy = false;
+  var lastScan = {};   // id -> timestamp（連続読み取り防止）
+  var LABEL = { 'in': '【入場モード】', 'out': '【退場モード】', 'auto': '【自動モード】' };
+
+  function setMode(m) {
+    mode = m;
+    document.getElementById('btn-in').className   = (m === 'in')   ? 'active-in'   : '';
+    document.getElementById('btn-out').className  = (m === 'out')  ? 'active-out'  : '';
+    document.getElementById('btn-auto').className = (m === 'auto') ? 'active-auto' : '';
+    show('', LABEL[m] + ' QRコードをかざしてください');
+  }
+
+  function beep(freq, dur) {
+    try {
+      var ctx = new (window.AudioContext || window.webkitAudioContext)();
+      var o = ctx.createOscillator(), g = ctx.createGain();
+      o.connect(g); g.connect(ctx.destination);
+      o.frequency.value = freq; g.gain.value = 0.2;
+      o.start(); setTimeout(function(){ o.stop(); ctx.close(); }, dur);
+    } catch (e) {}
+  }
+
+  function show(cls, html) {
+    var el = document.getElementById('result');
+    el.className = cls;
+    el.innerHTML = html;
+  }
+
+  function showCounts(c) {
+    if (!c) return;
+    document.getElementById('counts').innerHTML =
+      '会場内 <b>' + c.inside + '</b> ／ 退場中 <b>' + c.exited +
+      '</b> ／ 入場済（延べ） <b>' + c.entered + '</b>（登録 ' + c.total + '名）';
+  }
+
+  function handleCode(id) {
+    id = (id || '').trim();
+    if (!id || busy) return;
+    var now = Date.now();
+    if (lastScan[id] && now - lastScan[id] < 10000) return; // 10秒間は同一コード無視
+    lastScan[id] = now;
+    busy = true;
+    show('', '記録中…');
+
+    api({ action: 'scan', id: id, mode: mode }).then(function(res) {
+        busy = false;
+        if (res.status === 'ok') {
+          var isIn = (res.action === 'in');
+          beep(isIn ? 880 : 660, 150);
+          show(isIn ? 'ok' : 'out',
+            (isIn ? (res.reentry ? '🔁 再入場' : '✅ 入場') : '🚪 退場') + ' ' + res.time +
+            '<div class="name">' + esc(res.name) + ' 様</div>' + esc(res.affiliation || '') +
+            (res.warn ? '<br><span class="warn">⚠ ' + esc(res.warn) + '</span>' : '') +
+            (res.memo ? '<span class="memo">📌 メモ: ' + esc(res.memo) + '</span>' : ''));
+        } else if (res.status === 'dup') {
+          beep(440, 300);
+          show('dup', '⚠️ ' + esc(res.message) +
+            '<div class="name">' + esc(res.name) + ' 様</div>');
+        } else {
+          beep(220, 500);
+          show('err', '❌ ' + esc(res.message));
+        }
+        showCounts(res.counts);
+      }).catch(function(err) {
+        busy = false;
+        beep(220, 500);
+        show('err', '通信エラー: ' + esc(String(err)) + '<br>もう一度お試しください');
+      });
+  }
+
+  function manualSubmit() {
+    var el = document.getElementById('manual-id');
+    handleCode(el.value);
+    el.value = '';
+  }
+
+  document.getElementById('manual-id').addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') { e.preventDefault(); manualSubmit(); }
+  });
+
+  // ============ USB/Bluetooth QRリーダー（キーボード型）対応 ============
+  var hidBuf = '';
+  var hidTimer = null;
+  document.addEventListener('keydown', function(e) {
+    if (e.target && e.target.id === 'manual-id') return;
+    if (e.key === 'F1') { e.preventDefault(); setMode('in');   return; }
+    if (e.key === 'F2') { e.preventDefault(); setMode('out');  return; }
+    if (e.key === 'F3') { e.preventDefault(); setMode('auto'); return; }
+    if (e.key === 'Enter') {
+      if (hidBuf.length >= 3) { e.preventDefault(); handleCode(hidBuf); }
+      hidBuf = '';
+      return;
+    }
+    if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      hidBuf += e.key;
+      clearTimeout(hidTimer);
+      hidTimer = setTimeout(function() { hidBuf = ''; }, 500);
+    }
+  });
+
+  function esc(s) {
+    return String(s).replace(/[&<>"']/g, function(c) {
+      return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c];
+    });
+  }
+
+  // ============ カメラ読み取り ============
+  var scanner = new Html5Qrcode('reader');
+  var cameraOn = false;
+  var scanConfig = { fps: 10, qrbox: { width: 230, height: 230 } };
+
+  function camOk() {
+    cameraOn = true;
+    document.getElementById('btn-cam').textContent = 'カメラ停止';
+    document.getElementById('cam-status').textContent = 'カメラ動作中';
+  }
+  function camFail() {
+    cameraOn = false;
+    document.getElementById('btn-cam').textContent = 'カメラ起動';
+    document.getElementById('cam-status').textContent = 'カメラを起動できません。ブラウザのカメラ許可（アドレスバーの🔒 → カメラ）を確認し、「カメラ起動」を押してください。';
+    document.getElementById('reader').style.display = 'none';
+  }
+  function startCamera() {
+    scanner.start({ facingMode: 'environment' }, scanConfig,
+      function(t) { handleCode(t); }, function(_) {})
+    .then(camOk)
+    .catch(function() {
+      Html5Qrcode.getCameras().then(function(cams) {
+        if (!cams || !cams.length) { camFail(); return; }
+        scanner.start(cams[0].id, scanConfig, function(t) { handleCode(t); }, function(_) {})
+          .then(camOk).catch(camFail);
+      }).catch(camFail);
+    });
+  }
+  function toggleCamera() {
+    if (cameraOn) {
+      scanner.stop().then(function() {
+        cameraOn = false;
+        document.getElementById('btn-cam').textContent = 'カメラ起動';
+        document.getElementById('cam-status').textContent = 'カメラ停止中';
+        document.getElementById('reader').style.display = 'none';
+      });
+    } else {
+      document.getElementById('reader').style.display = 'block';
+      startCamera();
+    }
+  }
+  startCamera();
+</script>
+</body>
+</html>
