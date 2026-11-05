@@ -38,7 +38,7 @@
       border-radius: 8px; background: #133B47; color: #fff; }
     .note { margin-top: 8px; font-size: 12px; color: #888; text-align: center; line-height: 1.6; }
     .cam-bar { max-width: 480px; margin: 6px auto 0; padding: 0 10px;
-      display: flex; align-items: center; gap: 10px; }
+      display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
     .cam-bar button { padding: 6px 12px; font-size: 13px; border: 1px solid #99a;
       border-radius: 6px; background: #fff; color: #334; }
     .cam-bar span { font-size: 12px; color: #777; }
@@ -69,6 +69,8 @@
   <div class="cam-bar">
     <button id="btn-cam" onclick="toggleCamera()">カメラ停止</button>
     <span id="cam-status"></span>
+    <button onclick="testSound()" style="margin-left:auto;font-size:13px;padding:6px 10px;border-radius:6px;border:1px solid #2F8FA7;background:#fff;color:#2F8FA7;cursor:pointer">🔊 音のテスト</button>
+    <span id="snd-status" style="font-size:12px;color:#888">音: 画面を一度タップすると有効</span>
   </div>
 
   <div class="panel">
@@ -146,7 +148,44 @@
     show('', LABEL[m] + ' QRコードをかざしてください');
   }
 
+  // ============ 効果音 ============
+  // スマホは最初のタップまで音が出せない（自動再生制限）。iPhoneはマナーモードでも
+  // <audio> 要素の再生なら鳴るので、WAVを生成して <audio> で鳴らし、WebAudioは予備にする。
+  var SOUND = {};
+  function makeWav(freq, ms, vol) {
+    var rate = 22050, n = Math.floor(rate * ms / 1000), buf = new ArrayBuffer(44 + n * 2), v = new DataView(buf);
+    function str(o, s) { for (var i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); }
+    str(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true); str(8, 'WAVE'); str(12, 'fmt ');
+    v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+    v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+    str(36, 'data'); v.setUint32(40, n * 2, true);
+    for (var i = 0; i < n; i++) {
+      var env = Math.min(1, i / 200, (n - i) / 400);              // クリック音防止の立ち上がり・立ち下がり
+      v.setInt16(44 + i * 2, Math.sin(2 * Math.PI * freq * i / rate) * vol * env * 32767, true);
+    }
+    var b = ''; var u = new Uint8Array(buf); for (var j = 0; j < u.length; j++) b += String.fromCharCode(u[j]);
+    var a = new Audio('data:audio/wav;base64,' + btoa(b)); a.preload = 'auto'; return a;
+  }
+  function initSounds() {
+    SOUND.ok = makeWav(880, 150, 0.6); SOUND.out = makeWav(660, 150, 0.6);
+    SOUND.dup = makeWav(440, 300, 0.6); SOUND.err = makeWav(220, 500, 0.6);
+  }
+  var audioUnlocked = false;
+  function unlockAudio() {                                       // 最初のタップで再生許可を得る
+    if (audioUnlocked) return; audioUnlocked = true;
+    Object.keys(SOUND).forEach(function(k) { var a = SOUND[k]; a.volume = 0;
+      var p = a.play(); if (p && p.catch) p.catch(function(){}); setTimeout(function(){ a.pause(); a.currentTime = 0; a.volume = 1; }, 50); });
+    var st = document.getElementById('snd-status'); if (st) st.textContent = '🔊 音: ON';
+  }
   function beep(freq, dur) {
+    var key = freq >= 800 ? 'ok' : freq >= 600 ? 'out' : freq >= 400 ? 'dup' : 'err';
+    try { if (navigator.vibrate) navigator.vibrate(key === 'err' ? [120, 60, 120] : 80); } catch (e) {}
+    try {
+      var a = SOUND[key]; a.currentTime = 0; a.volume = 1;
+      var p = a.play(); if (p && p.catch) p.catch(function() { beepOsc(freq, dur); });
+    } catch (e) { beepOsc(freq, dur); }
+  }
+  function beepOsc(freq, dur) {
     try {
       var ctx = new (window.AudioContext || window.webkitAudioContext)();
       var o = ctx.createOscillator(), g = ctx.createGain();
@@ -155,6 +194,9 @@
       o.start(); setTimeout(function(){ o.stop(); ctx.close(); }, dur);
     } catch (e) {}
   }
+  function testSound() { unlockAudio(); setTimeout(function() { beep(880, 150); }, 120); }
+  initSounds();
+  ['touchstart', 'click', 'keydown'].forEach(function(ev) { document.addEventListener(ev, unlockAudio, { once: true, passive: true }); });
 
   function show(cls, html) {
     var el = document.getElementById('result');
