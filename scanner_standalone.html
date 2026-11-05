@@ -16,7 +16,13 @@
     .mode-bar button.active-in   { background: #1a7f37; color: #fff; }
     .mode-bar button.active-out  { background: #d4640a; color: #fff; }
     .mode-bar button.active-auto { background: #2F8FA7; color: #fff; }
-    #reader { width: 100%; max-width: 480px; margin: 0 auto; background: #000; }
+    #reader { width: 100%; max-width: 480px; margin: 0 auto; background: #000; box-sizing: border-box;
+              border: 14px solid transparent; transition: border-color .15s; }
+    #reader.flash-scan { border-color: #2ecc71; }           /* QRを検出した瞬間: 緑 */
+    #reader.flash-in   { border-color: #1a7f37; }           /* 入場を記録: 濃い緑 */
+    #reader.flash-out  { border-color: #d4640a; }           /* 退場を記録: オレンジ */
+    #reader.flash-dup  { border-color: #e0a800; }           /* 二重読み取り: 黄 */
+    #reader.flash-err  { border-color: #c22; }              /* エラー: 赤 */
     .panel { max-width: 480px; margin: 10px auto; padding: 0 10px; }
     #result { border-radius: 10px; padding: 16px; text-align: center;
       font-size: 16px; background: #fff; color: #555; min-height: 90px; }
@@ -71,6 +77,7 @@
     <span id="cam-status"></span>
     <button onclick="testSound()" style="margin-left:auto;font-size:13px;padding:6px 10px;border-radius:6px;border:1px solid #2F8FA7;background:#fff;color:#2F8FA7;cursor:pointer">🔊 音のテスト</button>
     <span id="snd-status" style="font-size:12px;color:#888">音: 画面を一度タップすると有効</span>
+    <label style="font-size:12px;color:#555;margin-left:4px"><input type="checkbox" id="voice-on" onchange="setVoice(this.checked)"> 🗣 音声案内</label>
   </div>
 
   <div class="panel">
@@ -85,7 +92,6 @@
       USB/BluetoothのQRリーダー（キーボード型）はこのページを開いたまま読み取るだけで記録されます。<br>
       PCでは F1＝入場 / F2＝退場 / F3＝自動。同じコードの連続読み取りは10秒間無視されます。
     </div>
-    <div class="links"><a href="#" data-page="dashboard">参加状況ダッシュボード</a>｜<a href="#" data-page="register">当日受付（カード発行）</a></div>
   </div>
 
 <script>
@@ -194,8 +200,15 @@
       o.start(); setTimeout(function(){ o.stop(); ctx.close(); }, dur);
     } catch (e) {}
   }
-  function testSound() { unlockAudio(); setTimeout(function() { beep(880, 150); }, 120); }
+  function testSound() { unlockAudio(); setTimeout(function() { beep(880, 150); }, 120); setTimeout(function() { speak('音声案内のテストです。入場登録しました'); }, 400); }
+  var speechUnlocked = false;
+  function unlockSpeech() {
+    if (speechUnlocked || !('speechSynthesis' in window)) return; speechUnlocked = true;
+    try { var u = new SpeechSynthesisUtterance(''); u.lang = 'ja-JP'; window.speechSynthesis.speak(u); } catch (e) {}
+  }
+  ['touchstart', 'click', 'keydown'].forEach(function(ev) { document.addEventListener(ev, unlockSpeech, { once: true, passive: true }); });
   initSounds();
+  window.addEventListener('load', function() { var v = document.getElementById('voice-on'); if (v) v.checked = VOICE_ON; });
   ['touchstart', 'click', 'keydown'].forEach(function(ev) { document.addEventListener(ev, unlockAudio, { once: true, passive: true }); });
 
   function show(cls, html) {
@@ -203,6 +216,30 @@
     el.className = cls;
     el.innerHTML = html;
   }
+  // カメラ枠を太い色枠で光らせる（kind: scan / in / out / dup / err）
+  var flashTimer = null;
+  function flashReader(kind, ms) {
+    var r = document.getElementById('reader'); if (!r) return;
+    r.className = 'flash-' + kind;
+    clearTimeout(flashTimer);
+    flashTimer = setTimeout(function() { r.className = ''; }, ms || 1500);
+  }
+  // 音声案内（端末の読み上げ機能）。設定はこの端末に保存
+  var VOICE_ON = true;
+  try { VOICE_ON = localStorage.getItem('scannerVoice') !== 'off'; } catch (e) {}
+  function setVoice(on) { VOICE_ON = on; try { localStorage.setItem('scannerVoice', on ? 'on' : 'off'); } catch (e) {} }
+  function speak(text) {
+    if (!VOICE_ON || !('speechSynthesis' in window)) return;
+    try {
+      window.speechSynthesis.cancel();
+      var u = new SpeechSynthesisUtterance(text);
+      u.lang = 'ja-JP'; u.rate = 1.0; u.pitch = 1.0; u.volume = 1.0;
+      var vs = window.speechSynthesis.getVoices().filter(function(v) { return /ja/i.test(v.lang); });
+      if (vs.length) u.voice = vs.find(function(v) { return /Kyoko|O-ren|Google 日本語|Japanese/i.test(v.name); }) || vs[0];
+      window.speechSynthesis.speak(u);
+    } catch (e) {}
+  }
+  if ('speechSynthesis' in window) { try { window.speechSynthesis.getVoices(); } catch (e) {} }
 
   function showCounts(c) {
     if (!c) return;
@@ -218,6 +255,7 @@
     if (lastScan[id] && now - lastScan[id] < 10000) return; // 10秒間は同一コード無視
     lastScan[id] = now;
     busy = true;
+    flashReader('scan', 4000);
     show('', '記録中…');
 
     api({ action: 'scan', id: id, mode: mode }).then(function(res) {
@@ -225,17 +263,19 @@
         if (res.status === 'ok') {
           var isIn = (res.action === 'in');
           beep(isIn ? 880 : 660, 150);
+          flashReader(isIn ? 'in' : 'out', 2000);
+          setTimeout(function() { speak(isIn ? '入場登録しました' : 'ご参加、ありがとうございました。'); }, 250);
           show(isIn ? 'ok' : 'out',
             (isIn ? (res.reentry ? '🔁 再入場' : '✅ 入場') : '🚪 退場') + ' ' + res.time +
             '<div class="name">' + esc(res.name) + ' 様</div>' + esc(res.affiliation || '') +
             (res.warn ? '<br><span class="warn">⚠ ' + esc(res.warn) + '</span>' : '') +
             (res.memo ? '<span class="memo">📌 メモ: ' + esc(res.memo) + '</span>' : ''));
         } else if (res.status === 'dup') {
-          beep(440, 300);
+          beep(440, 300); flashReader('dup', 2000);
           show('dup', '⚠️ ' + esc(res.message) +
             '<div class="name">' + esc(res.name) + ' 様</div>');
         } else {
-          beep(220, 500);
+          beep(220, 500); flashReader('err', 2000);
           show('err', '❌ ' + esc(res.message));
         }
         showCounts(res.counts);
